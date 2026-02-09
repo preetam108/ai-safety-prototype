@@ -178,3 +178,4 @@ with right:
 """)
     else:
         st.info("No history yet.")
+        
