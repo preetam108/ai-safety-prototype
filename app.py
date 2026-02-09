@@ -2,112 +2,129 @@ import streamlit as st
 import json
 import os
 import datetime
-import re
 
+
+# ===============================
+# CONFIG
+# ===============================
 MEMORY_FILE = "memory.json"
-LEARN_FILE = "learned_risks.json"
 
 
-# ---------------- LOAD / SAVE ----------------
+# ===============================
+# MEMORY SYSTEM
+# ===============================
+def load_memory():
 
-def load_file(path):
-    if not os.path.exists(path):
+    if not os.path.exists(MEMORY_FILE):
         return []
 
-    with open(path, "r") as f:
-        try:
+    try:
+        with open(MEMORY_FILE, "r") as f:
             return json.load(f)
-        except:
-            return []
+    except:
+        return []
 
 
-def save_file(path, data):
-    with open(path, "w") as f:
+def save_memory(data):
+
+    with open(MEMORY_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 
-# ---------------- LEARNING ENGINE ----------------
+# ===============================
+# ADAPTIVE RISK ENGINE (FIXED)
+# ===============================
+def check_risk(task, memory):
 
-def extract_words(text):
-    words = re.findall(r"\b[a-zA-Z]{4,}\b", text.lower())
-    return list(set(words))
+    base_risky = ["hack", "illegal", "attack", "steal", "bypass"]
 
-
-def update_learning(task, learned):
-
-    words = extract_words(task)
-
-    for w in words:
-        if w not in learned:
-            learned.append(w)
-
-    return learned
-
-
-# ---------------- RISK ENGINE ----------------
-
-BASE_RISK = ["hack", "illegal", "attack", "steal", "bypass"]
-
-
-def check_risk(task, learned):
+    text = task.lower()
 
     score = 0
     matched = []
 
-    all_risks = list(set(BASE_RISK + learned))
 
-    for word in all_risks:
-        if word in task.lower():
-            score += 15
-            matched.append(word)
+    # Count ALL occurrences
+    for word in base_risky:
 
-    if score >= 40:
-        return "HIGH", score, matched
-    elif score >= 20:
-        return "MEDIUM", score, matched
+        count = text.count(word)
+
+        if count > 0:
+            score += count * 20
+            matched.append(f"{word} x{count}")
+
+
+    # Learn from past BLOCKED tasks
+    learned_words = []
+
+    for item in memory:
+
+        if item["status"] == "BLOCKED":
+
+            learned_words.extend(
+                item["task"].lower().split()
+            )
+
+
+    # Learning bonus
+    for lw in set(learned_words):
+
+        if lw in text:
+            score += 10
+
+
+    # Risk level decision
+    if score >= 60:
+        level = "HIGH"
+    elif score >= 30:
+        level = "MEDIUM"
     else:
-        return "LOW", score, matched
+        level = "LOW"
 
 
-# ---------------- UI ----------------
+    return level, score, matched
 
-st.set_page_config(page_title="AI Safety Prototype", layout="wide")
+
+# ===============================
+# UI SETUP
+# ===============================
+st.set_page_config(
+    page_title="AI Safety Prototype",
+    layout="wide"
+)
 
 st.title("🛡️ AI Safety Prototype")
 st.subheader("Monitor • Block • Learn • Evolve")
 
+
 left, right = st.columns(2)
 
-
-memory = load_file(MEMORY_FILE)
-learned = load_file(LEARN_FILE)
+memory = load_memory()
 
 
-# ---------------- LEFT PANEL ----------------
-
+# ===============================
+# LEFT PANEL (INPUT)
+# ===============================
 with left:
 
     st.header("📝 Submit Task")
 
-    task = st.text_area("Enter Task")
+    task = st.text_area(
+        "Enter Task",
+        placeholder="Example: hack hack hack system"
+    )
 
     submit = st.button("Run Safety Check")
 
 
-    if submit and task:
+    if submit and task.strip():
 
-        level, score, matched = check_risk(task, learned)
+        level, score, matched = check_risk(task, memory)
 
         status = "ALLOWED"
 
         if level == "HIGH":
             status = "BLOCKED"
-
-
-        # Learn from blocked tasks
-        if status == "BLOCKED":
-            learned = update_learning(task, learned)
-            save_file(LEARN_FILE, learned)
 
 
         record = {
@@ -119,64 +136,77 @@ with left:
             "matched": matched
         }
 
+
         memory.append(record)
-        save_file(MEMORY_FILE, memory)
+
+        save_memory(memory)
 
 
-        # Result
+        # SHOW RESULT
         if status == "BLOCKED":
-            st.error(f"🚫 Blocked — {level} ({score})")
-            if matched:
-                st.warning("⚠️ Detected: " + ", ".join(matched))
+
+            st.error(
+                f"🚫 BLOCKED — Risk: {level} ({score})"
+            )
+
         else:
-            st.success(f"✅ Allowed — {level} ({score})")
+
+            st.success(
+                f"✅ ALLOWED — Risk: {level} ({score})"
+            )
 
 
-# ---------------- RIGHT PANEL ----------------
+        if matched:
 
+            st.warning(
+                "🧩 Matched: " + ", ".join(matched)
+            )
+
+
+
+# ===============================
+# RIGHT PANEL (DASHBOARD)
+# ===============================
 with right:
 
     st.header("📊 System Dashboard")
 
+
     total = len(memory)
-    blocked = len([m for m in memory if m["status"] == "BLOCKED"])
+
+    blocked = len([
+        m for m in memory if m["status"] == "BLOCKED"
+    ])
+
     allowed = total - blocked
+
 
     st.metric("Total Tasks", total)
     st.metric("Blocked", blocked)
     st.metric("Allowed", allowed)
 
-    st.metric("Learned Risks", len(learned))
-
     st.divider()
 
-    st.subheader("🧠 Learned Risk Vocabulary")
-
-    if learned:
-        st.write(", ".join(sorted(learned)))
-    else:
-        st.info("No learned risks yet.")
-
-
-    st.divider()
 
     st.subheader("📚 Learning History")
 
+
     if memory:
 
-        for item in reversed(memory[-8:]):
+        for item in reversed(memory[-12:]):
 
             color = "🟢" if item["status"] == "ALLOWED" else "🔴"
+
 
             st.markdown(f"""
 **{color} {item['status']}**  
 🕒 {item['time']}  
 📌 {item['task']}  
 ⚠️ Risk: {item['risk_level']} ({item['risk_score']})  
-🧩 Matched: {", ".join(item["matched"])}
+🧩 Matched: {", ".join(item["matched"]) if item["matched"] else "None"}
 ---
 """)
-    else:
-        st.info("No history yet.")
 
-    
+    else:
+
+        st.info("No history yet.")
